@@ -75,14 +75,19 @@ def load_prompt_template():
 
 
 def get_video_capture():
-    """Cross-platform webcam capture. Windows uses CAP_DSHOW."""
+    """Cross-platform webcam capture. Tries indices 0, 1, 2. Windows uses CAP_DSHOW."""
     if cv2 is None:
         return None
-    if sys.platform == "win32":
-        cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-    else:
-        cap = cv2.VideoCapture(0)
-    return cap
+    for index in (0, 1, 2):
+        if sys.platform == "win32":
+            cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+        else:
+            cap = cv2.VideoCapture(index)
+        if cap.isOpened():
+            return cap
+        cap.release()
+    # None of the indices worked; return an unopened cap so caller can show error
+    return cv2.VideoCapture(0, cv2.CAP_DSHOW) if sys.platform == "win32" else cv2.VideoCapture(0)
 
 
 def capture_frame(cap):
@@ -216,7 +221,10 @@ def main():
                 logger.info("Camera started.")
             else:
                 st.session_state.cap = None
-                st.warning("Could not open camera.")
+                st.warning(
+                    "**Could not open camera.** Try: (1) Grant camera access: **macOS** → System Settings → Privacy & Security → Camera → enable for Terminal or your IDE. "
+                    "(2) Quit other apps using the camera (Zoom, FaceTime, etc.). (3) Reload the page and turn **Start Recording** on again."
+                )
         cap = st.session_state.cap
         if cap is not None and cap.isOpened() and image_count < MAX_IMAGES:
             now = time.time()
