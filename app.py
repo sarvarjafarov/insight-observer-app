@@ -179,23 +179,24 @@ def main():
         logger.info("Video changed to '%s', images folder cleared.", video_title)
     st.session_state.last_video_id = video_id
 
-    # YouTube iframe
-    if iframe_html:
-        st.markdown(iframe_html, unsafe_allow_html=True)
-    st.divider()
-
-    # Two-column layout: controls + image count
+    # ---- Webcam first (so Start button is visible without scrolling) ----
+    st.subheader("📷 Webcam capture")
+    image_count = count_images_in_folder()
     col1, col2 = st.columns(2)
     with col1:
         evaluate_clicked = st.button("Evaluate Response", type="primary", key="eval_btn")
     with col2:
-        image_count = count_images_in_folder()
         st.metric("Images captured", f"{image_count} / {MAX_IMAGES}")
 
-    # WebRTC streamer (same pattern as app_webcam_test.py — camera in browser)
-    st.markdown("---")
-    st.subheader("📷 Webcam capture")
-    st.caption("Click the **Start** button below to turn on your camera. Your browser may ask for permission. Then use **Capture snapshot** to save frames.")
+    st.markdown("**Step 1:** Click the green **Start** button below → **Step 2:** Allow camera when your browser asks → **Step 3:** Use **Capture snapshot** to save frames.")
+    with st.expander("Camera not showing? Troubleshooting"):
+        st.markdown("""
+        - **Allow camera** when the browser prompts (Chrome: click Allow in the address bar).
+        - Use **Chrome** or **Edge**; Safari can be finicky with WebRTC.
+        - **Reload the page** and click Start again.
+        - If you're on **Streamlit Cloud**, the app must run over **HTTPS** (it does by default).
+        - Make sure no other app (Zoom, FaceTime) is using the camera.
+        """)
     ctx = webrtc_streamer(
         key="reaction_capture",
         media_stream_constraints={
@@ -245,7 +246,15 @@ def main():
         if st.session_state._stream_connected:
             st.session_state._stream_connected = False
             logger.info("Camera stopped (WebRTC stream stopped).")
-        st.info("Click the **Start** button above (in the webcam section) to begin the stream. After your camera turns on, use **Capture snapshot** to save frames for AI evaluation.")
+        st.info("Click the green **Start** button above to begin the stream. After your camera turns on, use **Capture snapshot** to save frames for AI evaluation.")
+
+    # YouTube video (below webcam so Start is visible first)
+    st.divider()
+    st.subheader("📺 Watch the video")
+    if iframe_html:
+        st.markdown(iframe_html, unsafe_allow_html=True)
+    else:
+        st.caption("No iframe for this video.")
 
     # Evaluate Response
     if evaluate_clicked:
