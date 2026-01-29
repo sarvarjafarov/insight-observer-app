@@ -193,6 +193,9 @@ def main():
         st.metric("Images captured", f"{image_count} / {MAX_IMAGES}")
 
     # WebRTC streamer (same pattern as app_webcam_test.py — camera in browser)
+    st.markdown("---")
+    st.subheader("📷 Webcam capture")
+    st.caption("Click the **Start** button below to turn on your camera. Your browser may ask for permission. Then use **Capture snapshot** to save frames.")
     ctx = webrtc_streamer(
         key="reaction_capture",
         media_stream_constraints={
@@ -242,7 +245,7 @@ def main():
         if st.session_state._stream_connected:
             st.session_state._stream_connected = False
             logger.info("Camera stopped (WebRTC stream stopped).")
-        st.info("Click **Start** above to begin the webcam stream, then use **Capture snapshot** to save frames for AI evaluation.")
+        st.info("Click the **Start** button above (in the webcam section) to begin the stream. After your camera turns on, use **Capture snapshot** to save frames for AI evaluation.")
 
     # Evaluate Response
     if evaluate_clicked:
