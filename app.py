@@ -11,7 +11,11 @@ import sys
 import time
 from pathlib import Path
 
-import cv2
+try:
+    import cv2
+except ImportError:
+    cv2 = None  # OpenCV not available (e.g. on Streamlit Cloud); webcam disabled
+
 import streamlit as st
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -72,6 +76,8 @@ def load_prompt_template():
 
 def get_video_capture():
     """Cross-platform webcam capture. Windows uses CAP_DSHOW."""
+    if cv2 is None:
+        return None
     if sys.platform == "win32":
         cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
     else:
@@ -198,8 +204,11 @@ def main():
         image_count = count_images_in_folder()
         st.metric("Images captured", f"{image_count} / {MAX_IMAGES}")
 
+    if cv2 is None:
+        st.info("Webcam recording is only available when running the app locally (e.g. `streamlit run app.py` on your machine). On Streamlit Cloud you can still use **Evaluate Response** with images you upload or add to the `images` folder.")
+
     # Recording logic: capture every 10 seconds, max 20 images
-    if st.session_state.recording:
+    if st.session_state.recording and cv2 is not None:
         if st.session_state.cap is None or not st.session_state.cap.isOpened():
             st.session_state.cap = get_video_capture()
             if st.session_state.cap.isOpened():
@@ -213,7 +222,7 @@ def main():
             now = time.time()
             if now - st.session_state.last_capture_time >= CAPTURE_INTERVAL_SEC:
                 ret, frame = capture_frame(cap)
-                if ret and frame is not None:
+                if ret and frame is not None and cv2 is not None:
                     ensure_images_dir()
                     filename = IMAGES_DIR / f"capture_{int(now * 1000)}.jpg"
                     cv2.imwrite(str(filename), frame)
