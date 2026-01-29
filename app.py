@@ -196,6 +196,10 @@ def main():
         - **Reload the page** and click Start again.
         - If you're on **Streamlit Cloud**, the app must run over **HTTPS** (it does by default).
         - Make sure no other app (Zoom, FaceTime) is using the camera.
+        - **"Connection taking longer / STUN/TURN"**: Your network or firewall may block WebRTC. Try:
+          - **Run locally** instead: `streamlit run app.py` on your machine (no STUN needed).
+          - Different network (e.g. mobile hotspot) or disable VPN.
+          - Reload and click Start again; sometimes the first attempt times out.
         """)
     ctx = webrtc_streamer(
         key="reaction_capture",
@@ -207,7 +211,14 @@ def main():
             },
             "audio": False,
         },
-        rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+        rtc_configuration={
+            "iceServers": [
+                {"urls": "stun:stun.l.google.com:19302"},
+                {"urls": "stun:stun1.l.google.com:19302"},
+                {"urls": "stun:stun2.l.google.com:19302"},
+                {"urls": "stun:stun.stunprotocol.org:3478"},
+            ]
+        },
     )
 
     if ctx.video_receiver:
