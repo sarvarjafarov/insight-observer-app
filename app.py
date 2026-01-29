@@ -179,8 +179,7 @@ def main():
         logger.info("Video changed to '%s', images folder cleared.", video_title)
     st.session_state.last_video_id = video_id
 
-    # ---- Webcam first (so Start button is visible without scrolling) ----
-    st.subheader("📷 Webcam capture")
+    # ---- Images for AI: Upload first (works on Streamlit Cloud), camera optional (local only) ----
     image_count = count_images_in_folder()
     col1, col2 = st.columns(2)
     with col1:
@@ -188,19 +187,19 @@ def main():
     with col2:
         st.metric("Images captured", f"{image_count} / {MAX_IMAGES}")
 
-    st.markdown(
-    "**Step 1:** Click the green **Start** button below → **Step 2:** In the picker, select your camera (e.g. MacBook Pro Camera) and click **DONE** → "
-    "**Step 3:** When the live feed appears here, use **Capture snapshot** to save frames."
-)
+    st.warning(
+        "**On Streamlit Cloud the camera usually does not connect** (\"Connection taking longer\" is a known limitation). "
+        "Use **Upload images** below — it works the same for AI evaluation."
+    )
 
-    # Upload fallback when WebRTC fails (e.g. "Connection taking longer" on prod)
-    st.markdown("---")
-    st.caption("**Camera not connecting?** (e.g. \"Connection taking longer\" on Streamlit Cloud)")
+    st.subheader("📤 Upload images (works everywhere)")
+    st.caption("Add reaction photos or screenshots. Works on Streamlit Cloud and locally. Max 20 images.")
     uploaded = st.file_uploader(
-        "Upload images instead (no camera needed)",
+        "Choose image files",
         type=["jpg", "jpeg", "png"],
         accept_multiple_files=True,
         key="img_upload",
+        label_visibility="collapsed",
     )
     if uploaded:
         ensure_images_dir()
@@ -216,84 +215,74 @@ def main():
             added += 1
             logger.info("Image uploaded: %s (total: %d)", path.name, current)
         if added:
-            st.success(f"Added {added} image(s). Use **Evaluate Response** above.")
+            st.success(f"Added {added} image(s). Click **Evaluate Response** above when ready.")
             st.rerun()
 
-    with st.expander("Camera not showing? Troubleshooting"):
-        st.markdown("""
-        - **Allow camera** when the browser prompts (Chrome: click Allow in the address bar).
-        - Use **Chrome** or **Edge**; Safari can be finicky with WebRTC.
-        - **Reload the page** and click Start again.
-        - If you're on **Streamlit Cloud**, the app must run over **HTTPS** (it does by default).
-        - Make sure no other app (Zoom, FaceTime) is using the camera.
-        - **"Connection taking longer / STUN/TURN"** (common on Streamlit Cloud): We use STUN + free TURN relays. If it still fails:
-          - **Run locally** for reliable camera: `git clone ... && streamlit run app.py` (no NAT/firewall issues).
-          - Try a different network (e.g. mobile hotspot) or disable VPN.
-          - Reload and click Start again; wait 10–15 seconds for TURN fallback.
-        """)
-    ctx = webrtc_streamer(
-        key="reaction_capture",
-        media_stream_constraints={
-            "video": {
-                "width": {"ideal": 640},
-                "height": {"ideal": 480},
-                "frameRate": {"ideal": 30},
-            },
-            "audio": False,
-        },
-        rtc_configuration={
-            "iceServers": [
-                {"urls": "stun:stun.l.google.com:19302"},
-                {"urls": "stun:stun1.l.google.com:19302"},
-                {"urls": "stun:stun2.l.google.com:19302"},
-                {"urls": "stun:stun.stunprotocol.org:3478"},
-                # TURN relay for prod when STUN fails (e.g. strict firewalls)
-                {"urls": "turn:freeturn.net:3478", "username": "free", "credential": "free"},
-                {"urls": "turn:freestun.net:3478", "username": "free", "credential": "free"},
-            ]
-        },
-    )
-
-    if ctx.video_receiver:
-        device_label = None
-        try:
-            track = ctx.video_receiver.get_track()
-            if track and getattr(track, "label", None):
-                device_label = track.label
-        except Exception:
-            pass
-
-        if not st.session_state._stream_connected:
-            st.session_state._stream_connected = True
-            name = device_label or "(device name pending)"
-            logger.info("Camera started (WebRTC stream connected — using device: %s)", name)
-
-        if device_label:
-            st.info(f"**Using device:** {device_label}")
-        else:
-            st.info("**Using device:** (starting stream…)")
-
-        if image_count >= MAX_IMAGES:
-            st.warning(f"Maximum of {MAX_IMAGES} images reached. Use **Evaluate Response** or select another video to clear.")
-        elif st.button("📸 Capture snapshot"):
-            try:
-                frame = ctx.video_receiver.get_frame()
-                saved_name = save_frame_from_webrtc(frame)
-                if saved_name:
-                    st.success(f"Saved {saved_name}")
-                    st.rerun()
-                else:
-                    st.error("Could not save image or max images reached.")
-            except Exception as e:
-                st.error(f"Waiting for video to start… ({e})")
-    else:
-        if st.session_state._stream_connected:
-            st.session_state._stream_connected = False
-            logger.info("Camera stopped (WebRTC stream stopped).")
-        st.info(
-            "Click the green **Start** button above → choose your camera (e.g. MacBook Pro Camera) → click **DONE**. "
-            "If the feed still doesn’t appear (or you see \"Connection taking longer\"), wait 10–15 seconds or use **Upload images instead** below."
+    # Camera in expander so prod users aren't blocked by the broken WebRTC UI
+    with st.expander("Or use camera (works when you run the app locally)"):
+        st.caption("On Streamlit Cloud the camera often shows \"Connection taking longer\" and will not connect. Run the app on your computer for camera: `streamlit run app.py`")
+        st.markdown(
+            "**Steps:** Click **Start** below → select your camera → **DONE** → use **Capture snapshot** when the feed appears."
         )
+        ctx = webrtc_streamer(
+            key="reaction_capture",
+            media_stream_constraints={
+                "video": {
+                    "width": {"ideal": 640},
+                    "height": {"ideal": 480},
+                    "frameRate": {"ideal": 30},
+                },
+                "audio": False,
+            },
+            rtc_configuration={
+                "iceServers": [
+                    {"urls": "stun:stun.l.google.com:19302"},
+                    {"urls": "stun:stun1.l.google.com:19302"},
+                    {"urls": "stun:stun2.l.google.com:19302"},
+                    {"urls": "stun:stun.stunprotocol.org:3478"},
+                    {"urls": "turn:freeturn.net:3478", "username": "free", "credential": "free"},
+                    {"urls": "turn:freestun.net:3478", "username": "free", "credential": "free"},
+                ]
+            },
+        )
+
+        if ctx.video_receiver:
+            device_label = None
+            try:
+                track = ctx.video_receiver.get_track()
+                if track and getattr(track, "label", None):
+                    device_label = track.label
+            except Exception:
+                pass
+
+            if not st.session_state._stream_connected:
+                st.session_state._stream_connected = True
+                name = device_label or "(device name pending)"
+                logger.info("Camera started (WebRTC stream connected — using device: %s)", name)
+
+            if device_label:
+                st.info(f"**Using device:** {device_label}")
+            else:
+                st.info("**Using device:** (starting stream…)")
+
+            if image_count >= MAX_IMAGES:
+                st.warning(f"Maximum of {MAX_IMAGES} images reached. Use **Evaluate Response** or select another video to clear.")
+            elif st.button("📸 Capture snapshot", key="capture_btn"):
+                try:
+                    frame = ctx.video_receiver.get_frame()
+                    saved_name = save_frame_from_webrtc(frame)
+                    if saved_name:
+                        st.success(f"Saved {saved_name}")
+                        st.rerun()
+                    else:
+                        st.error("Could not save image or max images reached.")
+                except Exception as e:
+                    st.error(f"Waiting for video to start… ({e})")
+        else:
+            if st.session_state._stream_connected:
+                st.session_state._stream_connected = False
+                logger.info("Camera stopped (WebRTC stream stopped).")
+            st.info("Click **Start** above → select camera → **DONE**. If you see \"Connection taking longer\", use **Upload images** instead (works on Streamlit Cloud).")
 
     # YouTube video (below webcam so Start is visible first)
     st.divider()
