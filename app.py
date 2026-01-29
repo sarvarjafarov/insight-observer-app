@@ -1,6 +1,6 @@
 """
 YouTube Content Reaction Study - Streamlit app.
-Captures webcam images while watching a video and evaluates reactions via OpenAI.
+Uses WebRTC (browser camera) to capture images while watching a video; evaluates reactions via OpenAI.
 """
 
 import base64
@@ -10,15 +10,13 @@ import os
 import sys
 import time
 from pathlib import Path
-
-try:
-    import cv2
-except ImportError:
-    cv2 = None  # OpenCV not available (e.g. on Streamlit Cloud); webcam disabled
+from typing import Optional
 
 import streamlit as st
 from dotenv import load_dotenv
 from openai import OpenAI
+from PIL import Image
+from streamlit_webrtc import webrtc_streamer
 
 # -----------------------------------------------------------------------------
 # Logging: all major events to server terminal with timestamps
@@ -39,7 +37,6 @@ IMAGES_DIR = Path("images")
 DATA_JSON = Path("youtube_data.json")
 PROMPT_TEMPLATE_FILE = Path("prompt_reaction.txt")
 OPENAI_MODEL = "gpt-5-nano"
-CAPTURE_INTERVAL_SEC = 10
 MAX_IMAGES = 20
 
 
@@ -74,30 +71,6 @@ def load_prompt_template():
     return PROMPT_TEMPLATE_FILE.read_text(encoding="utf-8").strip()
 
 
-def get_video_capture():
-    """Cross-platform webcam capture. Tries indices 0, 1, 2. Windows uses CAP_DSHOW."""
-    if cv2 is None:
-        return None
-    for index in (0, 1, 2):
-        if sys.platform == "win32":
-            cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
-        else:
-            cap = cv2.VideoCapture(index)
-        if cap.isOpened():
-            return cap
-        cap.release()
-    # None of the indices worked; return an unopened cap so caller can show error
-    return cv2.VideoCapture(0, cv2.CAP_DSHOW) if sys.platform == "win32" else cv2.VideoCapture(0)
-
-
-def capture_frame(cap):
-    """Read one frame from the camera. Returns (success, BGR image or None)."""
-    if cap is None or not cap.isOpened():
-        return False, None
-    ret, frame = cap.read()
-    return ret, frame
-
-
 def count_images_in_folder():
     """Count image files in the images folder."""
     if not IMAGES_DIR.exists():
@@ -125,7 +98,7 @@ def evaluate_response_with_openai(video_title: str, video_id: str) -> str:
 
     b64_images = get_base64_images()
     if not b64_images:
-        return "No images captured. Start recording and capture some images first."
+        return "No images captured. Start the stream and capture some snapshots first."
 
     content = [{"type": "text", "text": prompt_text}]
     for b64 in b64_images:
@@ -155,6 +128,23 @@ def evaluate_response_with_openai(video_title: str, video_id: str) -> str:
         return f"Error calling OpenAI: {e}"
 
 
+def save_frame_from_webrtc(frame) -> Optional[str]:
+    """Save a WebRTC frame to images folder as JPEG. Returns filename or None."""
+    try:
+        img_bgr = frame.to_ndarray(format="bgr24")
+        img_rgb = img_bgr[:, :, ::-1]
+    except Exception as e:
+        logger.warning("Could not get ndarray from frame: %s", e)
+        return None
+    ensure_images_dir()
+    if count_images_in_folder() >= MAX_IMAGES:
+        return None
+    filename = IMAGES_DIR / f"capture_{int(time.time() * 1000)}.jpg"
+    Image.fromarray(img_rgb).save(filename, "JPEG", quality=85)
+    logger.info("Image saved: %s (total: %d)", filename.name, count_images_in_folder())
+    return filename.name
+
+
 # -----------------------------------------------------------------------------
 # Streamlit app
 # -----------------------------------------------------------------------------
@@ -168,15 +158,10 @@ def main():
         st.error("No video data found. Add entries to youtube_data.json.")
         return
 
-    # Session state
     if "last_video_id" not in st.session_state:
         st.session_state.last_video_id = None
-    if "recording" not in st.session_state:
-        st.session_state.recording = False
-    if "last_capture_time" not in st.session_state:
-        st.session_state.last_capture_time = 0
-    if "cap" not in st.session_state:
-        st.session_state.cap = None
+    if "_stream_connected" not in st.session_state:
+        st.session_state._stream_connected = False
 
     # Video dropdown
     options = [v["title"] for v in videos]
@@ -194,65 +179,77 @@ def main():
         logger.info("Video changed to '%s', images folder cleared.", video_title)
     st.session_state.last_video_id = video_id
 
-    # Show video iframe
+    # YouTube iframe
     if iframe_html:
         st.markdown(iframe_html, unsafe_allow_html=True)
     st.divider()
 
-    # Two-column layout
+    # Two-column layout: controls + image count
     col1, col2 = st.columns(2)
     with col1:
-        recording = st.toggle("Start Recording", key="recording_toggle")
-        st.session_state.recording = recording
-        evaluate_clicked = st.button("Evaluate Response", type="primary")
+        evaluate_clicked = st.button("Evaluate Response", type="primary", key="eval_btn")
     with col2:
         image_count = count_images_in_folder()
         st.metric("Images captured", f"{image_count} / {MAX_IMAGES}")
 
-    if cv2 is None:
-        st.info("Webcam recording is only available when running the app locally (e.g. `streamlit run app.py` on your machine). On Streamlit Cloud you can still use **Evaluate Response** with images you upload or add to the `images` folder.")
+    # WebRTC streamer (same pattern as app_webcam_test.py — camera in browser)
+    ctx = webrtc_streamer(
+        key="reaction_capture",
+        media_stream_constraints={
+            "video": {
+                "width": {"ideal": 640},
+                "height": {"ideal": 480},
+                "frameRate": {"ideal": 30},
+            },
+            "audio": False,
+        },
+        rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+    )
 
-    # Recording logic: capture every 10 seconds, max 20 images
-    if st.session_state.recording and cv2 is not None:
-        if st.session_state.cap is None or not st.session_state.cap.isOpened():
-            st.session_state.cap = get_video_capture()
-            if st.session_state.cap.isOpened():
-                st.session_state.last_capture_time = time.time()  # first capture in 10 sec
-                logger.info("Camera started.")
-            else:
-                st.session_state.cap = None
-                st.warning(
-                    "**Could not open camera.** Try: (1) Grant camera access: **macOS** → System Settings → Privacy & Security → Camera → enable for Terminal or your IDE. "
-                    "(2) Quit other apps using the camera (Zoom, FaceTime, etc.). (3) Reload the page and turn **Start Recording** on again."
-                )
-        cap = st.session_state.cap
-        if cap is not None and cap.isOpened() and image_count < MAX_IMAGES:
-            now = time.time()
-            if now - st.session_state.last_capture_time >= CAPTURE_INTERVAL_SEC:
-                ret, frame = capture_frame(cap)
-                if ret and frame is not None and cv2 is not None:
-                    ensure_images_dir()
-                    filename = IMAGES_DIR / f"capture_{int(now * 1000)}.jpg"
-                    cv2.imwrite(str(filename), frame)
-                    st.session_state.last_capture_time = now
-                    logger.info("Image saved: %s (total: %d)", filename.name, count_images_in_folder())
+    if ctx.video_receiver:
+        device_label = None
+        try:
+            track = ctx.video_receiver.get_track()
+            if track and getattr(track, "label", None):
+                device_label = track.label
+        except Exception:
+            pass
+
+        if not st.session_state._stream_connected:
+            st.session_state._stream_connected = True
+            name = device_label or "(device name pending)"
+            logger.info("Camera started (WebRTC stream connected — using device: %s)", name)
+
+        if device_label:
+            st.info(f"**Using device:** {device_label}")
+        else:
+            st.info("**Using device:** (starting stream…)")
+
+        if image_count >= MAX_IMAGES:
+            st.warning(f"Maximum of {MAX_IMAGES} images reached. Use **Evaluate Response** or select another video to clear.")
+        elif st.button("📸 Capture snapshot"):
+            try:
+                frame = ctx.video_receiver.get_frame()
+                saved_name = save_frame_from_webrtc(frame)
+                if saved_name:
+                    st.success(f"Saved {saved_name}")
+                    st.rerun()
+                else:
+                    st.error("Could not save image or max images reached.")
+            except Exception as e:
+                st.error(f"Waiting for video to start… ({e})")
     else:
-        if st.session_state.cap is not None:
-            st.session_state.cap.release()
-            st.session_state.cap = None
-            logger.info("Camera stopped.")
+        if st.session_state._stream_connected:
+            st.session_state._stream_connected = False
+            logger.info("Camera stopped (WebRTC stream stopped).")
+        st.info("Click **Start** above to begin the webcam stream, then use **Capture snapshot** to save frames for AI evaluation.")
 
-    # Evaluate button
+    # Evaluate Response
     if evaluate_clicked:
         with st.spinner("Evaluating response with OpenAI..."):
             response_text = evaluate_response_with_openai(video_title, video_id)
         st.subheader("Reaction analysis")
         st.write(response_text)
-
-    # Rerun to update capture count and periodic capture
-    if st.session_state.recording and image_count < MAX_IMAGES:
-        time.sleep(1)
-        st.rerun()
 
 
 if __name__ == "__main__":
