@@ -188,7 +188,37 @@ def main():
     with col2:
         st.metric("Images captured", f"{image_count} / {MAX_IMAGES}")
 
-    st.markdown("**Step 1:** Click the green **Start** button below → **Step 2:** Allow camera when your browser asks → **Step 3:** Use **Capture snapshot** to save frames.")
+    st.markdown(
+    "**Step 1:** Click the green **Start** button below → **Step 2:** In the picker, select your camera (e.g. MacBook Pro Camera) and click **DONE** → "
+    "**Step 3:** When the live feed appears here, use **Capture snapshot** to save frames."
+)
+
+    # Upload fallback when WebRTC fails (e.g. "Connection taking longer" on prod)
+    st.markdown("---")
+    st.caption("**Camera not connecting?** (e.g. \"Connection taking longer\" on Streamlit Cloud)")
+    uploaded = st.file_uploader(
+        "Upload images instead (no camera needed)",
+        type=["jpg", "jpeg", "png"],
+        accept_multiple_files=True,
+        key="img_upload",
+    )
+    if uploaded:
+        ensure_images_dir()
+        current = count_images_in_folder()
+        added = 0
+        for i, f in enumerate(uploaded):
+            if current >= MAX_IMAGES:
+                st.warning(f"Only the first {MAX_IMAGES} images are used. Max limit reached.")
+                break
+            path = IMAGES_DIR / f"upload_{int(time.time() * 1000)}_{i}_{f.name}"
+            path.write_bytes(f.getvalue())
+            current += 1
+            added += 1
+            logger.info("Image uploaded: %s (total: %d)", path.name, current)
+        if added:
+            st.success(f"Added {added} image(s). Use **Evaluate Response** above.")
+            st.rerun()
+
     with st.expander("Camera not showing? Troubleshooting"):
         st.markdown("""
         - **Allow camera** when the browser prompts (Chrome: click Allow in the address bar).
@@ -196,10 +226,10 @@ def main():
         - **Reload the page** and click Start again.
         - If you're on **Streamlit Cloud**, the app must run over **HTTPS** (it does by default).
         - Make sure no other app (Zoom, FaceTime) is using the camera.
-        - **"Connection taking longer / STUN/TURN"**: Your network or firewall may block WebRTC. Try:
-          - **Run locally** instead: `streamlit run app.py` on your machine (no STUN needed).
-          - Different network (e.g. mobile hotspot) or disable VPN.
-          - Reload and click Start again; sometimes the first attempt times out.
+        - **"Connection taking longer / STUN/TURN"** (common on Streamlit Cloud): We use STUN + free TURN relays. If it still fails:
+          - **Run locally** for reliable camera: `git clone ... && streamlit run app.py` (no NAT/firewall issues).
+          - Try a different network (e.g. mobile hotspot) or disable VPN.
+          - Reload and click Start again; wait 10–15 seconds for TURN fallback.
         """)
     ctx = webrtc_streamer(
         key="reaction_capture",
@@ -217,6 +247,9 @@ def main():
                 {"urls": "stun:stun1.l.google.com:19302"},
                 {"urls": "stun:stun2.l.google.com:19302"},
                 {"urls": "stun:stun.stunprotocol.org:3478"},
+                # TURN relay for prod when STUN fails (e.g. strict firewalls)
+                {"urls": "turn:freeturn.net:3478", "username": "free", "credential": "free"},
+                {"urls": "turn:freestun.net:3478", "username": "free", "credential": "free"},
             ]
         },
     )
@@ -257,7 +290,10 @@ def main():
         if st.session_state._stream_connected:
             st.session_state._stream_connected = False
             logger.info("Camera stopped (WebRTC stream stopped).")
-        st.info("Click the green **Start** button above to begin the stream. After your camera turns on, use **Capture snapshot** to save frames for AI evaluation.")
+        st.info(
+            "Click the green **Start** button above → choose your camera (e.g. MacBook Pro Camera) → click **DONE**. "
+            "If the feed still doesn’t appear (or you see \"Connection taking longer\"), wait 10–15 seconds or use **Upload images instead** below."
+        )
 
     # YouTube video (below webcam so Start is visible first)
     st.divider()
