@@ -1,0 +1,12 @@
+[
+  {
+    "id": "dQw4w9WgXcQ",
+    "title": "Sample Video 1",
+    "iframe": "<iframe width=\"560\" height=\"315\" src=\"https://www.youtube.com/embed/dQw4w9WgXcQ\" frameborder=\"0\" allow=\"accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture\" allowfullscreen></iframe>"
+  },
+  {
+    "id": "jNQXAC9IVRw",
+    "title": "Sample Video 2",
+    "iframe": "<iframe width=\"560\" height=\"315\" src=\"https://www.youtube.com/embed/jNQXAC9IVRw\" frameborder=\"0\" allow=\"accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture\" allowfullscreen></iframe>"
+  }
+]
